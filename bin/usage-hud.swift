@@ -31,6 +31,20 @@ struct Provider {
     let windows: [Win]
 }
 
+// A resizable rounded-rect mask for NSVisualEffectView.maskImage — makes the
+// frosted material (and thus the window shadow) take the rounded shape.
+func roundedMask(radius: CGFloat) -> NSImage {
+    let d = radius * 2 + 1
+    let img = NSImage(size: NSSize(width: d, height: d), flipped: false) { rect in
+        NSColor.black.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+        return true
+    }
+    img.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+    img.resizingMode = .stretch
+    return img
+}
+
 func runScript(_ args: String) -> String {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -264,6 +278,9 @@ final class HUD: NSObject, NSApplicationDelegate {
         blur.layer?.masksToBounds = true
         blur.layer?.borderWidth = 1
         blur.layer?.borderColor = NSColor(white: 1, alpha: 0.16).cgColor   // glass edge highlight
+        // Mask the material itself to the rounded shape so the WINDOW SHADOW
+        // follows the rounded corners instead of leaking as a rectangle.
+        blur.maskImage = roundedMask(radius: radius)
         blur.appearance = NSAppearance(named: .darkAqua)
         w.contentView = blur
         self.blur = blur
@@ -296,6 +313,7 @@ final class HUD: NSObject, NSApplicationDelegate {
         if !w.setFrameUsingName("UsageHUD") { w.center() }
         w.setFrameAutosaveName("UsageHUD")
         w.makeKeyAndOrderFront(nil)
+        w.invalidateShadow()
         self.window = w
         NSApp.setActivationPolicy(.accessory)
 
@@ -475,6 +493,9 @@ final class HUD: NSObject, NSApplicationDelegate {
         f.size = NSSize(width: max(240, size.width), height: max(70, size.height))
         f.origin.y = top - f.size.height
         window.setFrame(f, display: true, animate: false)
+        // Recompute the drop shadow from the rounded content so it doesn't
+        // leak as a rectangle at the 4 corners.
+        window.invalidateShadow()
     }
 }
 
