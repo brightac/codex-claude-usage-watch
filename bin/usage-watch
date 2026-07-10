@@ -335,8 +335,8 @@ async function claudeToken() {
 
 function normalizeClaudeWindow(win, windowMinutes) {
   if (!win || win.utilization == null) return null;
-  let util = win.utilization;
-  if (util <= 1) util *= 100;
+  // `utilization` is already a 0..100 percentage (verified: 2.0 = 2% used).
+  const util = win.utilization;
   let resetSec = null;
   const r = win.resets_at;
   if (typeof r === "number") resetSec = r > 1e12 ? r / 1000 : r;

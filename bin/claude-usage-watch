@@ -154,9 +154,9 @@ async function fetchUsage(token) {
 
 function normalizeWindow(win) {
   if (!win) return null;
-  let util = win.utilization;
+  const util = win.utilization;
   if (util == null) return null;
-  if (util <= 1) util *= 100; // API returns a 0..1 fraction
+  // `utilization` is already a 0..100 percentage (verified: 2.0 = 2% used).
 
   let resetSec = null;
   const r = win.resets_at;

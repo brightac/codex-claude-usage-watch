@@ -180,8 +180,7 @@ final class DialView: NSView {
         }
 
         // Pomodoro wedge: time remaining until reset, shrinking clockwise over
-        // the window. This is the meaningful "clock" — how far through the
-        // window you are.
+        // the window.
         if let reset = w.resetsAt {
             let remain = max(0, min(1, (reset - now) / windowSeconds(w)))
             let innerR = outerR - ringW - 2
