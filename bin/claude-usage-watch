@@ -207,14 +207,15 @@ async function render() {
 
   if (auth.error === "no-credentials") {
     console.log("No Claude Code credentials found in the keychain.");
-    console.log('Log in once with the CLI:  claude  (then /login),  or:  claude setup-token');
+    console.log("Log in with the CLI:  claude auth login   (writes a refreshable keychain token).");
+    console.log("Note: `claude setup-token` does NOT work — it only makes a CLAUDE_CODE_OAUTH_TOKEN env token.");
     return;
   }
   if (auth.error) {
     console.log(`Could not obtain a valid access token (${auth.error}).`);
     if (auth.error === "no-refresh-token") {
-      console.log("The stored token is expired and has no refresh token.");
-      console.log("Re-authenticate the CLI once:  claude  ->  /login   (or  claude setup-token )");
+      console.log("The stored token is expired / has no refresh token.");
+      console.log("Re-authenticate:  claude auth login   (NOT `claude setup-token`).");
     }
     return;
   }
@@ -223,7 +224,7 @@ async function render() {
   if (usage.error) {
     console.log(`Failed to fetch usage: ${usage.error}`);
     if (usage.error.startsWith("HTTP 401")) {
-      console.log("Token was rejected. Re-authenticate the CLI:  claude  ->  /login");
+      console.log("Token was rejected. Re-authenticate:  claude auth login");
     } else if (usage.body) {
       console.log(usage.body.slice(0, 300));
     }

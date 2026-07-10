@@ -52,9 +52,9 @@ func parseProviders(_ json: String) -> [Provider] {
           let arr = obj["providers"] as? [[String: Any]] else { return [] }
     return arr.map { pr in
         let name = pr["name"] as? String ?? "?"
-        var sub = pr["plan"] as? String ?? ""
-        if let tier = pr["tier"] as? String, !tier.isEmpty { sub += " · \(tier)" }
-        if let s = pr["staleSec"] as? Double { sub += "  (cached \(ageString(s)))" }
+        // Keep the dial subtitle short (just the plan) so it never collides
+        // with the gauges. The full tier/stale detail lives in the text skin.
+        var sub = pr["planLabel"] as? String ?? pr["plan"] as? String ?? ""
         if let e = pr["error"] as? String { sub = e == "login" ? "not logged in" : e }
         let wins = (pr["windows"] as? [[String: Any]] ?? []).map { w in
             Win(label: w["label"] as? String ?? "",
@@ -106,7 +106,9 @@ final class DialView: NSView {
     var cellW: CGFloat { dialR * 2 + cellGap }
     var cellH: CGFloat { dialR * 2 + labelH }
 
-    override var isFlipped: Bool { true }
+    // Natural (non-flipped) coordinates: y up. This makes circular drawing
+    // behave normally — arcs sweep clockwise from the top as expected.
+    override var isFlipped: Bool { false }
 
     func contentSize() -> NSSize {
         var maxWins = 0
@@ -124,7 +126,6 @@ final class DialView: NSView {
 
     override func draw(_ dirty: NSRect) {
         let now = Date().timeIntervalSince1970
-        var y = rowGap / 2
         let nameAttr: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold),
             .foregroundColor: NSColor.white,
@@ -134,26 +135,28 @@ final class DialView: NSView {
             .foregroundColor: NSColor(white: 1, alpha: 0.55),
         ]
 
+        var rowTop = bounds.height - rowGap / 2   // top of the first row
         for p in providers {
-            // Provider name + subtitle (left column)
-            (p.name as NSString).draw(at: NSPoint(x: PAD, y: y + dialR - 12), withAttributes: nameAttr)
+            let cy = rowTop - dialR                // vertical center of this row's dials
+            // Provider name + subtitle (left column), centered on the row
+            (p.name as NSString).draw(at: NSPoint(x: PAD, y: cy + 1), withAttributes: nameAttr)
             (p.subtitle as NSString).draw(
-                with: NSRect(x: PAD, y: y + dialR + 4, width: nameW + 40, height: 28),
+                with: NSRect(x: PAD, y: cy - 26, width: nameW + 70, height: 24),
                 options: [.usesLineFragmentOrigin], attributes: subAttr)
 
             var x = PAD + nameW
             if p.windows.isEmpty {
-                ("—" as NSString).draw(at: NSPoint(x: x, y: y + dialR - 8), withAttributes: subAttr)
+                ("—" as NSString).draw(at: NSPoint(x: x, y: cy - 6), withAttributes: subAttr)
             }
             for w in p.windows {
-                drawDial(centerX: x + dialR, centerY: y + dialR, w: w, now: now)
+                drawDial(cx: x + dialR, cy: cy, w: w, now: now)
                 x += cellW
             }
-            y += cellH + rowGap
+            rowTop -= (cellH + rowGap)
         }
     }
 
-    func drawDial(centerX cx: CGFloat, centerY cy: CGFloat, w: Win, now: Double) {
+    func drawDial(cx: CGFloat, cy: CGFloat, w: Win, now: Double) {
         let center = NSPoint(x: cx, y: cy)
         let outerR = dialR - ringW / 2
 
@@ -164,7 +167,7 @@ final class DialView: NSView {
         track.lineWidth = ringW
         track.stroke()
 
-        // Quota arc (remaining), from top clockwise
+        // Quota arc (remaining) — clockwise from the top (12 o'clock)
         let frac = max(0, min(1, w.leftPercent / 100))
         if frac > 0 {
             let arc = NSBezierPath()
@@ -176,7 +179,9 @@ final class DialView: NSView {
             arc.stroke()
         }
 
-        // Pomodoro wedge: time remaining until reset (shrinks over the window)
+        // Pomodoro wedge: time remaining until reset, shrinking clockwise over
+        // the window. This is the meaningful "clock" — how far through the
+        // window you are.
         if let reset = w.resetsAt {
             let remain = max(0, min(1, (reset - now) / windowSeconds(w)))
             let innerR = outerR - ringW - 2
@@ -186,39 +191,37 @@ final class DialView: NSView {
                 wedge.appendArc(withCenter: center, radius: innerR,
                                 startAngle: 90, endAngle: 90 - 360 * remain, clockwise: true)
                 wedge.close()
-                NSColor(white: 1, alpha: 0.12).setFill()
+                NSColor(white: 1, alpha: 0.13).setFill()
                 wedge.fill()
             }
         }
 
-        // Second hand — sweeps once a minute so the clock visibly turns.
-        let secs = now.truncatingRemainder(dividingBy: 60)
-        let handAngle = (90 - secs / 60 * 360) * .pi / 180
-        let handR = outerR - ringW - 3
-        if handR > 3 {
-            let hand = NSBezierPath()
-            hand.move(to: center)
-            hand.line(to: NSPoint(x: cx + cos(handAngle) * handR, y: cy + sin(handAngle) * handR))
-            NSColor(white: 1, alpha: 0.5).setStroke()
-            hand.lineWidth = 1.3
-            hand.lineCapStyle = .round
-            hand.stroke()
-        }
-        // Hub dot
-        let hub = NSBezierPath(ovalIn: NSRect(x: cx - 2, y: cy - 2, width: 4, height: 4))
-        NSColor(white: 1, alpha: 0.7).setFill()
-        hub.fill()
+        // Center: big remaining number with a smaller "%"
+        let numStr = "\(Int(w.leftPercent.rounded()))" as NSString
+        let numAttr: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .bold),
+            .foregroundColor: NSColor.white,
+        ]
+        let pctAttr: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold),
+            .foregroundColor: NSColor(white: 1, alpha: 0.7),
+        ]
+        let nsz = numStr.size(withAttributes: numAttr)
+        let percentSz = ("%" as NSString).size(withAttributes: pctAttr)
+        let totalW = nsz.width + percentSz.width
+        let startX = cx - totalW / 2
+        numStr.draw(at: NSPoint(x: startX, y: cy - nsz.height / 2 + 1), withAttributes: numAttr)
+        ("%" as NSString).draw(at: NSPoint(x: startX + nsz.width, y: cy - nsz.height / 2 + 3), withAttributes: pctAttr)
 
-        // Under-dial label:  "5h 42% 40m"  (quota number + reset countdown;
-        // the ring shows the quota, the wedge/hand show the time).
+        // Under-dial label:  "5h · 40m"
         let cd = countdownString(w.resetsAt)
-        let sub = "\(w.label) \(Int(w.leftPercent.rounded()))%\(cd.isEmpty ? "" : " " + cd)" as NSString
+        let sub = "\(w.label)\(cd.isEmpty ? "" : " · " + cd)" as NSString
         let subAttr: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .medium),
             .foregroundColor: NSColor(white: 1, alpha: 0.8),
         ]
         let sz = sub.size(withAttributes: subAttr)
-        sub.draw(at: NSPoint(x: cx - sz.width / 2, y: cy + dialR + 1), withAttributes: subAttr)
+        sub.draw(at: NSPoint(x: cx - sz.width / 2, y: cy - dialR - 12), withAttributes: subAttr)
     }
 }
 
@@ -233,8 +236,12 @@ final class HUD: NSObject, NSApplicationDelegate {
     var dial: DialView!              // dial skin
     var dataTimer: Timer?
     var animTimer: Timer?
+    var statusItem: NSStatusItem!
+    var tint: NSView!
+    var latestProviders: [Provider] = []
     let font = NSFont.monospacedSystemFont(ofSize: FONT_SIZE, weight: .regular)
     var skin: String { UserDefaults.standard.string(forKey: "skin") ?? "text" }
+    var tintAlpha: CGFloat { CGFloat((UserDefaults.standard.object(forKey: "tintAlpha") as? Double) ?? 0.3) }
 
     func applicationDidFinishLaunching(_: Notification) {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 200),
@@ -251,9 +258,12 @@ final class HUD: NSObject, NSApplicationDelegate {
         blur.material = .hudWindow
         blur.state = .active
         blur.blendingMode = .behindWindow
+        let radius: CGFloat = 20   // iOS-style rounded glass
         blur.wantsLayer = true
-        blur.layer?.cornerRadius = 14
+        blur.layer?.cornerRadius = radius
         blur.layer?.masksToBounds = true
+        blur.layer?.borderWidth = 1
+        blur.layer?.borderColor = NSColor(white: 1, alpha: 0.16).cgColor   // glass edge highlight
         blur.appearance = NSAppearance(named: .darkAqua)
         w.contentView = blur
         self.blur = blur
@@ -261,10 +271,11 @@ final class HUD: NSObject, NSApplicationDelegate {
         let tint = NSView(frame: blur.bounds)
         tint.autoresizingMask = [.width, .height]
         tint.wantsLayer = true
-        tint.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
-        tint.layer?.cornerRadius = 14
+        tint.layer?.cornerRadius = radius
         tint.layer?.masksToBounds = true
         blur.addSubview(tint)
+        self.tint = tint
+        applyTint()
 
         let tf = NSTextField(wrappingLabelWithString: "Loading…")
         tf.font = font
@@ -287,6 +298,19 @@ final class HUD: NSObject, NSApplicationDelegate {
         w.makeKeyAndOrderFront(nil)
         self.window = w
         NSApp.setActivationPolicy(.accessory)
+
+        // Menu-bar item — the discoverability anchor. Shows the tightest
+        // remaining %, and its menu lists every window plus all actions and
+        // their shortcuts.
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let btn = statusItem.button {
+            let img = NSImage(systemSymbolName: "gauge.medium", accessibilityDescription: "Usage")
+                ?? NSImage(systemSymbolName: "gauge", accessibilityDescription: "Usage")
+            img?.isTemplate = true
+            btn.image = img
+            btn.imagePosition = .imageLeading
+            btn.title = " …"
+        }
 
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
             if e.modifierFlags.contains(.command) {
@@ -318,7 +342,9 @@ final class HUD: NSObject, NSApplicationDelegate {
         dial.isHidden = !isDial
         animTimer?.invalidate(); animTimer = nil
         if isDial {
-            animTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            // Redraw every 30s only to keep the countdown / time-remaining wedge
+            // current — not a spinning animation.
+            animTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { _ in
                 self.dial.needsDisplay = true
             }
         }
@@ -327,15 +353,95 @@ final class HUD: NSObject, NSApplicationDelegate {
     func refresh() {
         let isDial = skin == "dial"
         DispatchQueue.global(qos: .utility).async {
-            if isDial {
-                let providers = parseProviders(runScript("--json"))
-                DispatchQueue.main.async { self.renderDial(providers) }
-            } else {
-                let out = runScript("--once").trimmingCharacters(in: .whitespacesAndNewlines)
-                DispatchQueue.main.async { self.renderText(out.isEmpty ? "(no output)" : out) }
+            let providers = parseProviders(runScript("--json"))
+            let text = isDial ? "" : runScript("--once").trimmingCharacters(in: .whitespacesAndNewlines)
+            DispatchQueue.main.async {
+                self.latestProviders = providers
+                if isDial { self.renderDial(providers) }
+                else { self.renderText(text.isEmpty ? "(no output)" : text) }
+                self.updateStatusAndMenu()
             }
         }
     }
+
+    // --- Menu bar + context menu -------------------------------------------
+
+    func updateStatusAndMenu() {
+        let pcts = latestProviders.flatMap { $0.windows.map { $0.leftPercent } }
+        statusItem.button?.title = pcts.min().map { " \(Int($0.rounded()))%" } ?? " –"
+        let menu = buildMenu()
+        statusItem.menu = menu
+        blur.menu = menu   // same menu on right-click of the HUD
+    }
+
+    func buildMenu() -> NSMenu {
+        let menu = NSMenu()
+        if latestProviders.isEmpty {
+            let it = NSMenuItem(title: "Loading…", action: nil, keyEquivalent: "")
+            it.isEnabled = false; menu.addItem(it)
+        }
+        for p in latestProviders {
+            let head = NSMenuItem(title: "\(p.name)  ·  \(p.subtitle)", action: nil, keyEquivalent: "")
+            head.isEnabled = false
+            menu.addItem(head)
+            for w in p.windows {
+                let cd = countdownString(w.resetsAt)
+                let title = "    \(w.label)   \(Int(w.leftPercent.rounded()))% left" + (cd.isEmpty ? "" : "   ·   resets in \(cd)")
+                let it = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                it.isEnabled = false
+                menu.addItem(it)
+            }
+        }
+        menu.addItem(.separator())
+
+        let skinItem = NSMenuItem(title: "Skin: \(skin == "dial" ? "Dial" : "Text")",
+                                  action: #selector(menuToggleSkin), keyEquivalent: "t")
+        skinItem.keyEquivalentModifierMask = .command; skinItem.target = self
+        menu.addItem(skinItem)
+
+        let refreshItem = NSMenuItem(title: "Refresh Now", action: #selector(menuRefresh), keyEquivalent: "r")
+        refreshItem.keyEquivalentModifierMask = .command; refreshItem.target = self
+        menu.addItem(refreshItem)
+
+        let hideItem = NSMenuItem(title: window.isVisible ? "Hide HUD" : "Show HUD",
+                                  action: #selector(menuToggleHUD), keyEquivalent: "")
+        hideItem.target = self
+        menu.addItem(hideItem)
+
+        // Background opacity submenu (more/less see-through, remembered)
+        let bgItem = NSMenuItem(title: "Background", action: nil, keyEquivalent: "")
+        let bgMenu = NSMenu()
+        for (label, val) in [("Clear", 0.12), ("Light", 0.30), ("Medium", 0.45), ("Solid", 0.65)] {
+            let it = NSMenuItem(title: label, action: #selector(menuOpacity(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = val
+            if abs(Double(tintAlpha) - val) < 0.01 { it.state = .on }
+            bgMenu.addItem(it)
+        }
+        bgItem.submenu = bgMenu
+        menu.addItem(bgItem)
+
+        menu.addItem(.separator())
+        let quit = NSMenuItem(title: "Quit", action: #selector(menuQuit), keyEquivalent: "q")
+        quit.keyEquivalentModifierMask = .command; quit.target = self
+        menu.addItem(quit)
+        return menu
+    }
+
+    func applyTint() { tint.layer?.backgroundColor = NSColor.black.withAlphaComponent(tintAlpha).cgColor }
+
+    @objc func menuOpacity(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(sender.representedObject as? Double ?? 0.3, forKey: "tintAlpha")
+        applyTint()
+        updateStatusAndMenu()
+    }
+    @objc func menuToggleSkin() { toggleSkin() }
+    @objc func menuRefresh() { refresh() }
+    @objc func menuToggleHUD() {
+        if window.isVisible { window.orderOut(nil) } else { window.makeKeyAndOrderFront(nil) }
+        updateStatusAndMenu()
+    }
+    @objc func menuQuit() { NSApp.terminate(nil) }
 
     func renderText(_ text: String) {
         label.stringValue = text

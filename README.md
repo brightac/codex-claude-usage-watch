@@ -93,8 +93,8 @@ Controls:
 Tweak look/behavior at the top of [`bin/usage-hud.swift`](bin/usage-hud.swift)
 (`REFRESH_SECONDS`, `FONT_SIZE`, tint alpha, dial sizes) then re‑run `./install.sh`.
 
-> **First run:** the Claude row shows `not logged in → claude setup-token`
-> until you log the CLI in once (see below). Codex works immediately.
+> **First run:** the Claude row shows `not logged in` until you log the CLI in
+> once with `claude auth login` (see below). Codex works immediately.
 
 ---
 
@@ -108,13 +108,20 @@ JSON‑RPC `account/rateLimits/read`. No network call of our own; nothing to log
 
 **Claude.** Calls `GET /api/oauth/usage` (the same endpoint the in‑session
 `/usage` command uses), authenticating with the Claude Code CLI's keychain
-entry (`Claude Code-credentials`). The token is auto‑refreshed when expired.
+entry (`Claude Code-credentials` → `claudeAiOauth`). The token is auto‑refreshed
+when expired, provided that entry has a refresh token.
 
-> If you only use the **Claude desktop app**, the CLI keychain entry may be
-> stale/absent. Log the CLI in once so it has its own refreshable token:
+> **Logging in (important):** the tool needs a non‑expired `claudeAiOauth` entry
+> **with a refresh token** in the keychain. Only the interactive browser login
+> writes that:
 > ```bash
-> claude setup-token      # or: claude → /login
+> claude auth login          # opens a browser; writes a refreshable keychain token
 > ```
+> ⚠️ **Do _not_ use `claude setup-token`** — despite the name, it only mints a
+> long‑lived `CLAUDE_CODE_OAUTH_TOKEN` for headless/CI use and does **not** touch
+> the `claudeAiOauth` keychain entry this tool reads. If you only ever used the
+> Claude **desktop app**, the CLI keychain entry is stale/absent until you run
+> `claude auth login`. This doesn't disturb any running Claude session.
 
 ### Rate limiting & caching
 

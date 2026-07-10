@@ -109,6 +109,21 @@ function bar(percent) {
   return `[${"█".repeat(filled)}${"░".repeat(width - filled)}]`;
 }
 
+function titleCase(s) {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+// Human plan label. Claude's rateLimitTier encodes the multiplier
+// ("default_claude_max_20x" -> "Max 20×"); Codex only exposes planType.
+function planLabel(name, plan, tier) {
+  if (name === "Claude" && tier) {
+    const parts = tier.replace(/^default_/, "").replace(/^claude_/, "").split("_").filter(Boolean);
+    if (parts.length) {
+      return parts.map((p) => (/^\d+x$/i.test(p) ? p.replace(/x$/i, "×") : titleCase(p))).join(" ");
+    }
+  }
+  return titleCase(plan || "unknown");
+}
+
 function pct(n) {
   return `${Math.round(n * 10) / 10}%`;
 }
@@ -404,14 +419,14 @@ function codexSection(res) {
   const rows = [];
   if (c.primary) rows.push({ label: "5h", used: c.primary.usedPercent, left: c.primary.remainingPercent, resetsAt: c.primary.resetsAt });
   if (c.secondary) rows.push({ label: "7d", used: c.secondary.usedPercent, left: c.secondary.remainingPercent, resetsAt: c.secondary.resetsAt });
-  return { header: `Codex   | plan=${c.planType}${staleTag(c)}`, rows, extra: [] };
+  return { header: `Codex   | ${planLabel("Codex", c.planType)}${staleTag(c)}`, rows, extra: [] };
 }
 
 function claudeSection(res) {
   if (res.status === "rejected") {
     const msg = res.reason?.message || String(res.reason);
     return { error: msg === "login"
-      ? "Claude  | not logged in  ->  run: claude setup-token"
+      ? "Claude  | not logged in  ->  run: claude auth login  (NOT setup-token)"
       : `Claude  | unavailable (${msg})` };
   }
   const c = res.value;
@@ -426,7 +441,7 @@ function claudeSection(res) {
     if (!win) continue;
     rows.push({ label, used: win.usedPercent, left: Math.max(0, 100 - win.usedPercent), resetsAt: win.resetsAt });
   }
-  return { header: `Claude  | plan=${c.planType}${c.tier ? ` tier=${c.tier}` : ""}${staleTag(c)}`, rows, extra: [] };
+  return { header: `Claude  | ${planLabel("Claude", c.planType, c.tier)}${staleTag(c)}`, rows, extra: [] };
 }
 
 function renderSection(sec, labelW) {
@@ -470,7 +485,7 @@ async function buildJson() {
     };
     add("5h", c.primary);
     add("7d", c.secondary);
-    providers.push({ name: "Codex", plan: c.planType, staleSec: c.staleSec ?? null, windows });
+    providers.push({ name: "Codex", plan: c.planType, planLabel: planLabel("Codex", c.planType), staleSec: c.staleSec ?? null, windows });
   } else {
     providers.push({ name: "Codex", error: codex.reason?.message || "unavailable", windows: [] });
   }
@@ -485,7 +500,7 @@ async function buildJson() {
     add("7d", c.seven_day);
     add("7d Opus", c.seven_day_opus);
     add("7d Sonnet", c.seven_day_sonnet);
-    providers.push({ name: "Claude", plan: c.planType, tier: c.tier, staleSec: c.staleSec ?? null, windows });
+    providers.push({ name: "Claude", plan: c.planType, tier: c.tier, planLabel: planLabel("Claude", c.planType, c.tier), staleSec: c.staleSec ?? null, windows });
   } else {
     providers.push({ name: "Claude", error: claude.reason?.message || "unavailable", windows: [] });
   }
