@@ -253,6 +253,7 @@ final class HUD: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var tint: NSView!
     var latestProviders: [Provider] = []
+    var lastUpdated: Date?
     let font = NSFont.monospacedSystemFont(ofSize: FONT_SIZE, weight: .regular)
     var skin: String { UserDefaults.standard.string(forKey: "skin") ?? "text" }
     var tintAlpha: CGFloat { CGFloat((UserDefaults.standard.object(forKey: "tintAlpha") as? Double) ?? 0.3) }
@@ -344,6 +345,11 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         applySkin()
         refresh()
+        startDataTimer()
+    }
+
+    func startDataTimer() {
+        dataTimer?.invalidate()
         dataTimer = Timer.scheduledTimer(withTimeInterval: REFRESH_SECONDS, repeats: true) { _ in self.refresh() }
     }
 
@@ -375,6 +381,7 @@ final class HUD: NSObject, NSApplicationDelegate {
             let text = isDial ? "" : runScript("--once").trimmingCharacters(in: .whitespacesAndNewlines)
             DispatchQueue.main.async {
                 self.latestProviders = providers
+                self.lastUpdated = Date()
                 if isDial { self.renderDial(providers) }
                 else { self.renderText(text.isEmpty ? "(no output)" : text) }
                 self.updateStatusAndMenu()
@@ -410,6 +417,16 @@ final class HUD: NSObject, NSApplicationDelegate {
                 menu.addItem(it)
             }
         }
+
+        // Data freshness
+        menu.addItem(.separator())
+        let up = NSMenuItem(title: "Updated \(clockString(lastUpdated, seconds: true))", action: nil, keyEquivalent: "")
+        up.isEnabled = false
+        menu.addItem(up)
+        let nx = NSMenuItem(title: "Next update \(clockString(dataTimer?.fireDate, seconds: false))", action: nil, keyEquivalent: "")
+        nx.isEnabled = false
+        menu.addItem(nx)
+
         menu.addItem(.separator())
 
         let skinItem = NSMenuItem(title: "Skin: \(skin == "dial" ? "Dial" : "Text")",
@@ -454,7 +471,14 @@ final class HUD: NSObject, NSApplicationDelegate {
         updateStatusAndMenu()
     }
     @objc func menuToggleSkin() { toggleSkin() }
-    @objc func menuRefresh() { refresh() }
+    @objc func menuRefresh() { startDataTimer(); refresh() }
+
+    func clockString(_ d: Date?, seconds: Bool) -> String {
+        guard let d = d else { return "—" }
+        let f = DateFormatter()
+        f.dateFormat = seconds ? "h:mm:ss a" : "h:mm a"
+        return f.string(from: d)
+    }
     @objc func menuToggleHUD() {
         if window.isVisible { window.orderOut(nil) } else { window.makeKeyAndOrderFront(nil) }
         updateStatusAndMenu()
