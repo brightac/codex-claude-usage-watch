@@ -243,8 +243,17 @@ function normalizeCodex(result) {
 }
 
 async function getCodex() {
-  const result = await readCodexRateLimits();
-  return normalizeCodex(result);
+  // The app-server occasionally fails to answer on first spawn; a fresh retry
+  // almost always succeeds (normal response is ~3s), so retry before giving up.
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return normalizeCodex(await readCodexRateLimits());
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr;
 }
 
 // Keep the last successful reading so a transient failure (throttling, a
@@ -259,6 +268,7 @@ function withCache(name, store, fn) {
       saveCache(name, value);
       return value;
     } catch (e) {
+      if (process.env.UW_DEBUG) console.error(`[${name}] fetch failed:`, e.message);
       if (e.message === "login") throw e; // real auth problem — never mask it
       const src = store.value ? { value: store.value, at: store.at } : loadCache(name);
       if (src && src.value) {

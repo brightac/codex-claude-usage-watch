@@ -27,7 +27,8 @@ struct Win {
 }
 struct Provider {
     let name: String
-    let subtitle: String   // plan / tier / stale / error
+    let subtitle: String   // plan / tier / error
+    let staleSec: Double?  // set when this provider's data came from cache
     let windows: [Win]
 }
 
@@ -76,7 +77,7 @@ func parseProviders(_ json: String) -> [Provider] {
                 resetsAt: w["resetsAt"] as? Double,
                 windowMinutes: (w["windowMinutes"] as? Double) ?? (w["windowMinutes"] as? Int).map(Double.init))
         }
-        return Provider(name: name, subtitle: sub, windows: wins)
+        return Provider(name: name, subtitle: sub, staleSec: pr["staleSec"] as? Double, windows: wins)
     }
 }
 
@@ -152,11 +153,23 @@ final class DialView: NSView {
         var rowTop = bounds.height - rowGap / 2   // top of the first row
         for p in providers {
             let cy = rowTop - dialR                // vertical center of this row's dials
-            // Provider name + subtitle (left column), centered on the row
+            // Provider name + subtitle (left column), centered on the row.
+            // If the data is stale (from cache), append the age in amber so the
+            // dial doesn't silently show old numbers as if fresh.
             (p.name as NSString).draw(at: NSPoint(x: PAD, y: cy + 1), withAttributes: nameAttr)
-            (p.subtitle as NSString).draw(
+            var subText = p.subtitle
+            var subFg = NSColor(white: 1, alpha: 0.55)
+            if let s = p.staleSec, s > 90 {
+                subText += "  ⚠\(Int((s / 60).rounded()))m"
+                subFg = NSColor(calibratedRed: 1.0, green: 0.76, blue: 0.24, alpha: 0.95)
+            }
+            let rowSubAttr: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .regular),
+                .foregroundColor: subFg,
+            ]
+            (subText as NSString).draw(
                 with: NSRect(x: PAD, y: cy - 26, width: nameW + 70, height: 24),
-                options: [.usesLineFragmentOrigin], attributes: subAttr)
+                options: [.usesLineFragmentOrigin], attributes: rowSubAttr)
 
             var x = PAD + nameW
             if p.windows.isEmpty {
@@ -406,7 +419,9 @@ final class HUD: NSObject, NSApplicationDelegate {
             it.isEnabled = false; menu.addItem(it)
         }
         for p in latestProviders {
-            let head = NSMenuItem(title: "\(p.name)  ·  \(p.subtitle)", action: nil, keyEquivalent: "")
+            var htitle = "\(p.name)  ·  \(p.subtitle)"
+            if let s = p.staleSec, s > 90 { htitle += "   (cached \(Int((s / 60).rounded()))m ago)" }
+            let head = NSMenuItem(title: htitle, action: nil, keyEquivalent: "")
             head.isEnabled = false
             menu.addItem(head)
             for w in p.windows {
