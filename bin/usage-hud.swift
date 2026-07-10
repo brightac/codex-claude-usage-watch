@@ -266,6 +266,7 @@ final class HUD: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var tint: NSView!
     var latestProviders: [Provider] = []
+    var lastText = ""
     var lastUpdated: Date?
     let font = NSFont.monospacedSystemFont(ofSize: FONT_SIZE, weight: .regular)
     var skin: String { UserDefaults.standard.string(forKey: "skin") ?? "text" }
@@ -385,6 +386,11 @@ final class HUD: NSObject, NSApplicationDelegate {
                 self.dial.needsDisplay = true
             }
         }
+        // Re-render immediately from cached data so the window resizes to the
+        // new skin right away, instead of keeping the old size until the next
+        // (async) fetch finishes.
+        if isDial { renderDial(latestProviders) }
+        else { renderText(lastText.isEmpty ? "Loading…" : lastText) }
     }
 
     func refresh() {
@@ -501,6 +507,7 @@ final class HUD: NSObject, NSApplicationDelegate {
     @objc func menuQuit() { NSApp.terminate(nil) }
 
     func renderText(_ text: String) {
+        lastText = text
         label.stringValue = text
         let attrs: [NSAttributedString.Key: Any] = [.font: font]
         let lines = text.isEmpty ? [""] : text.components(separatedBy: "\n")
