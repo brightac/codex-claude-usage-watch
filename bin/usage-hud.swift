@@ -212,9 +212,10 @@ final class DialView: NSView {
         numStr.draw(at: NSPoint(x: startX, y: cy - nsz.height / 2 + 1), withAttributes: numAttr)
         ("%" as NSString).draw(at: NSPoint(x: startX + nsz.width, y: cy - nsz.height / 2 + 3), withAttributes: pctAttr)
 
-        // Under-dial label:  "5h · 40m"
+        // Under-dial label:  "5h ↻ 40m"  (window name, then reset countdown —
+        // the ↻ marks it as "resets in", not a fraction of the window)
         let cd = countdownString(w.resetsAt)
-        let sub = "\(w.label)\(cd.isEmpty ? "" : " · " + cd)" as NSString
+        let sub = "\(w.label)\(cd.isEmpty ? "" : " ↻ " + cd)" as NSString
         let subAttr: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .medium),
             .foregroundColor: NSColor(white: 1, alpha: 0.8),
