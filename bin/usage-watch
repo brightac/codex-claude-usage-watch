@@ -46,6 +46,7 @@ const intervalArgIndex = process.argv.findIndex(
 );
 const once = process.argv.includes("--once");
 const lineMode = process.argv.includes("--line") || process.argv.includes("--oneline");
+const jsonMode = process.argv.includes("--json");
 const intervalSeconds =
   intervalArgIndex >= 0 && process.argv[intervalArgIndex + 1]
     ? Number(process.argv[intervalArgIndex + 1])
@@ -207,6 +208,7 @@ function normalizeCodexWindow(window) {
     usedPercent,
     remainingPercent: Math.max(0, 100 - usedPercent),
     resetsAt: window.resetsAt,
+    windowMinutes: window.windowDurationMins ?? null,
     secondsLeft: window.resetsAt ? window.resetsAt - Date.now() / 1000 : null,
   };
 }
@@ -291,7 +293,12 @@ async function claudeRefresh(full) {
       client_id: OAUTH_CLIENT_ID,
     }),
   });
-  if (!resp.ok) throw new Error(`refresh HTTP ${resp.status}`);
+  if (!resp.ok) {
+    // 400/401/403 = the stored refresh token is invalid/expired → re-auth
+    // needed (common on a machine that only ever used the Claude desktop app).
+    if ([400, 401, 403].includes(resp.status)) throw new Error("login");
+    throw new Error(`refresh HTTP ${resp.status}`);
+  }
   const data = await resp.json();
   if (!data.access_token) throw new Error("refresh missing token");
   oauth.accessToken = data.access_token;
@@ -311,7 +318,7 @@ async function claudeToken() {
   return await claudeRefresh(full);
 }
 
-function normalizeClaudeWindow(win) {
+function normalizeClaudeWindow(win, windowMinutes) {
   if (!win || win.utilization == null) return null;
   let util = win.utilization;
   if (util <= 1) util *= 100;
@@ -325,6 +332,7 @@ function normalizeClaudeWindow(win) {
   return {
     usedPercent: Math.round(util * 10) / 10,
     resetsAt: resetSec,
+    windowMinutes: windowMinutes ?? null,
     secondsLeft: resetSec != null ? resetSec - Date.now() / 1000 : null,
   };
 }
@@ -348,10 +356,10 @@ async function getClaude() {
   return {
     planType: oauth.subscriptionType || "unknown",
     tier: oauth.rateLimitTier || "",
-    five_hour: normalizeClaudeWindow(rl.five_hour),
-    seven_day: normalizeClaudeWindow(rl.seven_day),
-    seven_day_opus: normalizeClaudeWindow(rl.seven_day_opus),
-    seven_day_sonnet: normalizeClaudeWindow(rl.seven_day_sonnet),
+    five_hour: normalizeClaudeWindow(rl.five_hour, 300),
+    seven_day: normalizeClaudeWindow(rl.seven_day, 10080),
+    seven_day_opus: normalizeClaudeWindow(rl.seven_day_opus, 10080),
+    seven_day_sonnet: normalizeClaudeWindow(rl.seven_day_sonnet, 10080),
   };
 }
 const getClaudeCached = withCache("claude", claudeStore, getClaude);
@@ -448,6 +456,43 @@ async function buildFullFrame() {
   ].join("\n");
 }
 
+// Structured output for the desktop HUD (dial skin needs exact numbers +
+// reset timestamps + window durations to draw and animate).
+async function buildJson() {
+  const [codex, claude] = await Promise.allSettled([getCodexCached(), getClaudeCached()]);
+  const providers = [];
+
+  if (codex.status === "fulfilled") {
+    const c = codex.value;
+    const windows = [];
+    const add = (label, w) => {
+      if (w) windows.push({ label, leftPercent: w.remainingPercent, resetsAt: w.resetsAt, windowMinutes: w.windowMinutes });
+    };
+    add("5h", c.primary);
+    add("7d", c.secondary);
+    providers.push({ name: "Codex", plan: c.planType, staleSec: c.staleSec ?? null, windows });
+  } else {
+    providers.push({ name: "Codex", error: codex.reason?.message || "unavailable", windows: [] });
+  }
+
+  if (claude.status === "fulfilled") {
+    const c = claude.value;
+    const windows = [];
+    const add = (label, w) => {
+      if (w) windows.push({ label, leftPercent: Math.max(0, 100 - w.usedPercent), resetsAt: w.resetsAt, windowMinutes: w.windowMinutes });
+    };
+    add("5h", c.five_hour);
+    add("7d", c.seven_day);
+    add("7d Opus", c.seven_day_opus);
+    add("7d Sonnet", c.seven_day_sonnet);
+    providers.push({ name: "Claude", plan: c.planType, tier: c.tier, staleSec: c.staleSec ?? null, windows });
+  } else {
+    providers.push({ name: "Claude", error: claude.reason?.message || "unavailable", windows: [] });
+  }
+
+  return JSON.stringify({ fetchedAt: Date.now(), providers });
+}
+
 async function buildLine() {
   const [codex, claude] = await Promise.allSettled([getCodexCached(), getClaudeCached()]);
   const parts = [];
@@ -490,6 +535,10 @@ function paintLine(line) {
 }
 
 async function main() {
+  if (jsonMode) {
+    console.log(await buildJson());
+    return;
+  }
   if (lineMode) {
     if (intervalArgIndex < 0 || once) {
       console.log(await buildLine());

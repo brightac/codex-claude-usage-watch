@@ -77,12 +77,24 @@ set -g status-interval 300
 
 After `install.sh`, a translucent HUD floats on your desktop and starts at login.
 
+Two **skins**, toggled with **⌘T** (your choice is remembered):
+
+- **text** — the aligned `usage-watch --once` output (default).
+- **dial** — circular gauges: an outer colored ring for remaining quota
+  (green / amber / red), a shrinking pomodoro wedge for time‑until‑reset, and a
+  second hand that sweeps once a minute so the clock visibly turns.
+
+Controls:
+
 - **Drag** anywhere to move (position is remembered).
-- **⌘R** force refresh · **⌘Q** dismiss (it returns at next login).
+- **⌘T** switch skin · **⌘R** force refresh · **⌘Q** dismiss (returns at next login).
 - Dark, semi‑transparent panel — readable on any wallpaper.
 
 Tweak look/behavior at the top of [`bin/usage-hud.swift`](bin/usage-hud.swift)
-(`REFRESH_SECONDS`, `FONT_SIZE`, tint alpha) then re‑run `./install.sh`.
+(`REFRESH_SECONDS`, `FONT_SIZE`, tint alpha, dial sizes) then re‑run `./install.sh`.
+
+> **First run:** the Claude row shows `not logged in → claude setup-token`
+> until you log the CLI in once (see below). Codex works immediately.
 
 ---
 

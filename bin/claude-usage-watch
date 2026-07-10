@@ -88,6 +88,9 @@ async function refreshToken(fullObject) {
   }
 
   if (!resp.ok) {
+    // 400/401/403 = stored refresh token invalid/expired → treat as needing
+    // a fresh login (same message path as a missing refresh token).
+    if ([400, 401, 403].includes(resp.status)) return { error: "no-refresh-token" };
     return { error: `refresh-failed: HTTP ${resp.status}` };
   }
 
