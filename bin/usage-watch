@@ -228,16 +228,31 @@ function normalizeCodexWindow(window) {
   };
 }
 
+// Label a Codex window by its ACTUAL duration, not its primary/secondary slot.
+// (Codex dropped the 5h limit for some plans, so `primary` may now be the
+// weekly window — hardcoding primary→5h mislabeled the weekly data as "5h".)
+function codexWindowLabel(mins) {
+  if (mins === 300) return "5h";
+  if (mins === 10080) return "7d";
+  if (mins && mins % 1440 === 0) return `${mins / 1440}d`;
+  if (mins) return `${Math.round(mins / 60)}h`;
+  return "?";
+}
+
 function normalizeCodex(result) {
   const snapshot =
     result.rateLimitsByLimitId?.codex ??
     result.rateLimits ??
     Object.values(result.rateLimitsByLimitId || {})[0];
   if (!snapshot) throw new Error("no codex rate limit snapshot");
+  const windows = [];
+  for (const raw of [snapshot.primary, snapshot.secondary]) {
+    const w = normalizeCodexWindow(raw);
+    if (w) windows.push({ label: codexWindowLabel(w.windowMinutes), ...w });
+  }
   return {
     planType: snapshot.planType ?? result.rateLimits?.planType ?? "unknown",
-    primary: normalizeCodexWindow(snapshot.primary),
-    secondary: normalizeCodexWindow(snapshot.secondary),
+    windows,
     resetCredits: result.rateLimitResetCredits?.availableCount,
   };
 }
@@ -426,9 +441,9 @@ function codexSection(res) {
     return { error: `Codex   | unavailable (${msg})` };
   }
   const c = res.value;
-  const rows = [];
-  if (c.primary) rows.push({ label: "5h", used: c.primary.usedPercent, left: c.primary.remainingPercent, resetsAt: c.primary.resetsAt });
-  if (c.secondary) rows.push({ label: "7d", used: c.secondary.usedPercent, left: c.secondary.remainingPercent, resetsAt: c.secondary.resetsAt });
+  const rows = (c.windows || []).map((w) => ({
+    label: w.label, used: w.usedPercent, left: w.remainingPercent, resetsAt: w.resetsAt,
+  }));
   return { header: `Codex   | ${planLabel("Codex", c.planType)}${staleTag(c)}`, rows, extra: [] };
 }
 
@@ -489,12 +504,9 @@ async function buildJson() {
 
   if (codex.status === "fulfilled") {
     const c = codex.value;
-    const windows = [];
-    const add = (label, w) => {
-      if (w) windows.push({ label, leftPercent: w.remainingPercent, resetsAt: w.resetsAt, windowMinutes: w.windowMinutes });
-    };
-    add("5h", c.primary);
-    add("7d", c.secondary);
+    const windows = (c.windows || []).map((w) => ({
+      label: w.label, leftPercent: w.remainingPercent, resetsAt: w.resetsAt, windowMinutes: w.windowMinutes,
+    }));
     providers.push({ name: "Codex", plan: c.planType, planLabel: planLabel("Codex", c.planType), staleSec: c.staleSec ?? null, windows });
   } else {
     providers.push({ name: "Codex", error: codex.reason?.message || "unavailable", windows: [] });
