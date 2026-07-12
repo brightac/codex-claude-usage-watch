@@ -85,21 +85,24 @@ function formatDuration(seconds) {
 }
 
 // Fixed-width duration so the d/h/m columns line up across rows. Leading
-// zero units are blanked, and each unit is right-aligned:
-//   6d 20h 19m  ->  " 6d 20h 19m"
-//   1h 19m      ->  "     1h 19m"
+// Once there are days, minutes add noise, so drop them (6d 20h). Right-aligned
+// to a fixed width so the closing paren lines up across rows:
+//   6d 20h 41m  ->  " 6d 20h"
+//   3h 53m      ->  " 3h 53m"
+//   45m         ->  "    45m"
 function formatDurationPad(seconds) {
-  if (seconds == null) return "unknown".padStart(11);
+  if (seconds == null) return "unknown".padStart(7);
   let remaining = Math.max(0, Math.floor(seconds));
   const days = Math.floor(remaining / 86400);
   remaining %= 86400;
   const hours = Math.floor(remaining / 3600);
   remaining %= 3600;
   const minutes = Math.floor(remaining / 60);
-  const d = days > 0 ? `${days}d` : "";
-  const h = days > 0 || hours > 0 ? `${hours}h` : "";
-  const m = `${minutes}m`;
-  return `${d.padStart(3)} ${h.padStart(3)} ${m.padStart(3)}`;
+  let s;
+  if (days > 0) s = `${days}d ${hours}h`;
+  else if (hours > 0) s = `${hours}h ${minutes}m`;
+  else s = `${minutes}m`;
+  return s.padStart(7);
 }
 
 function bar(percent) {

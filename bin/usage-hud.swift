@@ -125,10 +125,22 @@ final class DialView: NSView {
     // behave normally — arcs sweep clockwise from the top as expected.
     override var isFlipped: Bool { false }
 
+    // Fixed columns by window type so the same window (e.g. 7d) lines up across
+    // providers. A provider missing a column (e.g. Codex has no 5h limit) gets a
+    // placeholder in that slot.
+    func columnLabels() -> [String] {
+        let order = ["5h", "7d", "7d Opus", "7d Sonnet"]
+        var cols: [String] = []
+        for lbl in order where providers.contains(where: { $0.windows.contains { $0.label == lbl } }) {
+            cols.append(lbl)
+        }
+        for p in providers { for w in p.windows where !cols.contains(w.label) { cols.append(w.label) } }
+        return cols
+    }
+
     func contentSize() -> NSSize {
-        var maxWins = 0
-        for p in providers { maxWins = max(maxWins, max(1, p.windows.count)) }
-        let w = nameW + CGFloat(maxWins) * cellW + PAD
+        let ncols = max(1, columnLabels().count)
+        let w = nameW + CGFloat(ncols) * cellW + PAD
         let h = CGFloat(providers.count) * (cellH + rowGap)
         return NSSize(width: max(240, w), height: max(80, h))
     }
@@ -150,6 +162,7 @@ final class DialView: NSView {
             .foregroundColor: NSColor(white: 1, alpha: 0.55),
         ]
 
+        let cols = columnLabels()
         var rowTop = bounds.height - rowGap / 2   // top of the first row
         for p in providers {
             let cy = rowTop - dialR                // vertical center of this row's dials
@@ -172,13 +185,15 @@ final class DialView: NSView {
                 options: [.usesLineFragmentOrigin], attributes: rowSubAttr)
 
             var x = PAD + nameW
-            if p.windows.isEmpty {
-                ("—" as NSString).draw(at: NSPoint(x: x, y: cy - 6), withAttributes: subAttr)
-            }
-            for w in p.windows {
-                drawDial(cx: x + dialR, cy: cy, w: w, now: now)
+            for col in cols {
+                if let w = p.windows.first(where: { $0.label == col }) {
+                    drawDial(cx: x + dialR, cy: cy, w: w, now: now)
+                } else {
+                    drawPlaceholder(cx: x + dialR, cy: cy, label: col)
+                }
                 x += cellW
             }
+            _ = subAttr
             rowTop -= (cellH + rowGap)
         }
     }
@@ -249,6 +264,36 @@ final class DialView: NSView {
         ]
         let sz = sub.size(withAttributes: subAttr)
         sub.draw(at: NSPoint(x: cx - sz.width / 2, y: cy - dialR - 12), withAttributes: subAttr)
+    }
+
+    // Placeholder for a window a provider doesn't have (e.g. Codex has no 5h
+    // limit): a dashed faint ring with "∞" — no cap for this window.
+    func drawPlaceholder(cx: CGFloat, cy: CGFloat, label: String) {
+        let center = NSPoint(x: cx, y: cy)
+        let outerR = dialR - ringW / 2
+
+        let track = NSBezierPath()
+        track.appendArc(withCenter: center, radius: outerR, startAngle: 0, endAngle: 360)
+        track.lineWidth = 2
+        track.setLineDash([2, 4], count: 2, phase: 0)
+        NSColor(white: 1, alpha: 0.18).setStroke()
+        track.stroke()
+
+        let mark = "∞" as NSString
+        let markAttr: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 16, weight: .semibold),
+            .foregroundColor: NSColor(white: 1, alpha: 0.4),
+        ]
+        let msz = mark.size(withAttributes: markAttr)
+        mark.draw(at: NSPoint(x: cx - msz.width / 2, y: cy - msz.height / 2 + 1), withAttributes: markAttr)
+
+        let sub = "\(label) no limit" as NSString
+        let subAttr: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .regular),
+            .foregroundColor: NSColor(white: 1, alpha: 0.4),
+        ]
+        let ssz = sub.size(withAttributes: subAttr)
+        sub.draw(at: NSPoint(x: cx - ssz.width / 2, y: cy - dialR - 12), withAttributes: subAttr)
     }
 }
 
