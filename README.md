@@ -20,6 +20,11 @@ Claude  | plan=max tier=default_claude_max_20x
 The bar is a **fuel gauge**: full = plenty left, draining as you consume. `↻`
 is when the window resets, with time remaining.
 
+> 📚 **教程 / Course**: this repo doubles as a teaching case for AI‑paired
+> development — see [`docs/course/`](docs/course/) (中文). It walks the real
+> build of this tool commit‑by‑commit, plus a meta‑lesson on how to turn a real
+> work session into a course.
+
 ---
 
 ## What's in here
