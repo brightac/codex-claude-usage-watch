@@ -55,12 +55,16 @@ All are self‑contained (`usage-watch`/`*-usage-watch` are single Node scripts,
 ```bash
 git clone https://github.com/brightac/codex-claude-usage-watch
 cd codex-claude-usage-watch
-./install.sh            # installs CLIs + builds & autostarts the desktop HUD
-# ./install.sh --no-hud # CLIs only, no HUD / LaunchAgent
+./install.sh            # installs CLIs + builds "Usage Watch.app" + autostarts it
+# ./install.sh --no-hud # CLIs only, no app / LaunchAgent
 ```
 
-Make sure `~/.local/bin` is on your `PATH`. To remove everything:
-`./install.sh --uninstall`.
+`install.sh` builds **`Usage Watch.app`** (with a gauge icon) into `/Applications`
+— a menu‑bar app (no Dock icon) that starts at login. Make sure `~/.local/bin`
+is on your `PATH` for the CLIs. To remove everything: `./install.sh --uninstall`.
+
+The app icon is committed (`bin/AppIcon.icns`); regenerate it with
+`swiftc bin/make-icon.swift -o /tmp/mkicon && ...` if you want to restyle it.
 
 ## Usage
 
