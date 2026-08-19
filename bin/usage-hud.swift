@@ -391,7 +391,9 @@ final class HUD: NSObject, NSApplicationDelegate {
         }
 
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
-            if e.modifierFlags.contains(.command) {
+            // Exact-match Command: a plain .contains would also swallow
+            // ⌃⌘Q (Lock Screen) and quit the HUD out from under the user.
+            if e.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command {
                 switch e.charactersIgnoringModifiers {
                 case "q": NSApp.terminate(nil); return nil
                 case "r": self.refresh(); return nil
