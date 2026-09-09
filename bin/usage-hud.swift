@@ -407,7 +407,9 @@ final class HUD: NSObject, NSApplicationDelegate {
         }
 
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
-            if e.modifierFlags.contains(.command) {
+            // Only pure ⌘ — so system chords like Ctrl+⌘+Q (lock screen) aren't
+            // swallowed and mistaken for our own ⌘Q/⌘R/⌘T.
+            if e.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command {
                 switch e.charactersIgnoringModifiers {
                 case "q": NSApp.terminate(nil); return nil
                 case "r": self.refresh(); return nil
