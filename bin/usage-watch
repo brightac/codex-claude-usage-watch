@@ -413,7 +413,12 @@ async function getClaude() {
   const windows = [];
   for (const [key, label, mins] of CLAUDE_WINDOWS) {
     const w = normalizeClaudeWindow(rl[key], mins, label);
-    if (w) windows.push(w);
+    if (!w) continue;
+    // Always keep 5h and 7d (all-models); hide a per-model weekly
+    // (Opus/Sonnet/Fable) while it's unused — it appears once you use it.
+    const perModel = label !== "5h" && label !== "7d";
+    if (perModel && w.usedPercent <= 0) continue;
+    windows.push(w);
   }
   return {
     planType: oauth.subscriptionType || "unknown",
