@@ -382,16 +382,45 @@ function normalizeClaudeWindow(win, windowMinutes, label) {
   };
 }
 
-// Field -> label. Anthropic exposes per-model weeklies; newer models (e.g.
-// Fable) currently ship under a rotating internal codename rather than a
-// seven_day_<model> key — update the codename here if it changes.
+// Preferred source: the `rate_limits.limits` array, where each entry is
+// { kind, group, percent (used %), resets_at, scope, ... }. This is stable and
+// self-describing (per-model weeklies carry scope.model.display_name), unlike
+// the old flat keys/codenames.
+function claudeWindowFromLimit(e) {
+  if (!e || typeof e.percent !== "number") return null;
+  let label, mins;
+  if (e.kind === "session") { label = "5h"; mins = 300; }
+  else if (e.kind === "weekly_all") { label = "7d"; mins = 10080; }
+  else if (e.kind === "weekly_scoped") {
+    const model = e.scope?.model?.display_name;
+    if (!model) return null;
+    label = `7d ${model}`; mins = 10080;
+  } else return null;
+  const usedPercent = Math.round(e.percent * 10) / 10;
+  let resetSec = null;
+  if (typeof e.resets_at === "string") {
+    const p = Date.parse(e.resets_at);
+    if (!Number.isNaN(p)) resetSec = p / 1000;
+  }
+  return {
+    label,
+    usedPercent,
+    remainingPercent: Math.max(0, 100 - usedPercent),
+    resetsAt: resetSec,
+    windowMinutes: mins,
+    secondsLeft: resetSec != null ? resetSec - Date.now() / 1000 : null,
+  };
+}
+
+// Fallback (older API without `limits`): flat keys. Per-model weeklies once
+// shipped under a rotating codename (Fable = nimbus_quill).
 const CLAUDE_WINDOWS = [
   ["five_hour", "5h", 300],
   ["seven_day", "7d", 10080],
   ["seven_day_opus", "7d Opus", 10080],
   ["seven_day_sonnet", "7d Sonnet", 10080],
   ["seven_day_haiku", "7d Haiku", 10080],
-  ["nimbus_quill", "7d Fable", 10080], // Fable weekly (codename, may rotate)
+  ["nimbus_quill", "7d Fable", 10080],
 ];
 
 async function getClaude() {
@@ -410,16 +439,23 @@ async function getClaude() {
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = JSON.parse(text);
   const rl = data.rate_limits || data.rateLimits || data || {};
-  const windows = [];
-  for (const [key, label, mins] of CLAUDE_WINDOWS) {
-    const w = normalizeClaudeWindow(rl[key], mins, label);
-    if (!w) continue;
-    // Always keep 5h and 7d (all-models); hide a per-model weekly
-    // (Opus/Sonnet/Fable) while it's unused — it appears once you use it.
-    const perModel = label !== "5h" && label !== "7d";
-    if (perModel && w.usedPercent <= 0) continue;
-    windows.push(w);
+  let windows = [];
+  if (Array.isArray(rl.limits) && rl.limits.length) {
+    // Preferred: the self-describing limits array.
+    for (const e of rl.limits) {
+      const w = claudeWindowFromLimit(e);
+      if (w) windows.push(w);
+    }
+  } else {
+    // Fallback: old flat keys.
+    for (const [key, label, mins] of CLAUDE_WINDOWS) {
+      const w = normalizeClaudeWindow(rl[key], mins, label);
+      if (w) windows.push(w);
+    }
   }
+  // Always keep 5h and 7d (all-models); hide a per-model weekly
+  // (Fable/Opus/Sonnet) while it's unused — it appears once you use it.
+  windows = windows.filter((w) => w.label === "5h" || w.label === "7d" || w.usedPercent > 0);
   return {
     planType: oauth.subscriptionType || "unknown",
     tier: oauth.rateLimitTier || "",
