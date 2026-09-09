@@ -125,22 +125,24 @@ final class DialView: NSView {
     // behave normally — arcs sweep clockwise from the top as expected.
     override var isFlipped: Bool { false }
 
-    // Fixed columns by window type so the same window (e.g. 7d) lines up across
-    // providers. A provider missing a column (e.g. Codex has no 5h limit) gets a
-    // placeholder in that slot.
-    func columnLabels() -> [String] {
-        let order = ["5h", "7d", "7d Opus", "7d Sonnet"]
-        var cols: [String] = []
-        for lbl in order where providers.contains(where: { $0.windows.contains { $0.label == lbl } }) {
-            cols.append(lbl)
-        }
-        for p in providers { for w in p.windows where !cols.contains(w.label) { cols.append(w.label) } }
-        return cols
+    // Layout: a 5h column (aligned; placeholder if a provider lacks it), then a
+    // single "weekly" column. All 7d* limits (all-models + per-model Opus/
+    // Sonnet/Fable) are drawn as ONE segmented ring — each model an arc segment,
+    // with a legend on the right. A lone weekly falls back to a plain ring.
+    let legendW: CGFloat = 92
+    var weeklyCellW: CGFloat { dialR * 2 + 12 + legendW }
+
+    func has5h() -> Bool { providers.contains { $0.windows.contains { $0.label == "5h" } } }
+    func weeklies(_ p: Provider) -> [Win] {
+        p.windows
+            .filter { $0.label == "7d" || $0.label.hasPrefix("7d ") }
+            .sorted { ($0.label == "7d" ? 0 : 1) < ($1.label == "7d" ? 0 : 1) }
     }
 
     func contentSize() -> NSSize {
-        let ncols = max(1, columnLabels().count)
-        let w = nameW + CGFloat(ncols) * cellW + PAD
+        let anyMulti = providers.contains { weeklies($0).count > 1 }
+        let wkW = anyMulti ? weeklyCellW : cellW
+        let w = nameW + (has5h() ? cellW : 0) + wkW + PAD
         let h = CGFloat(providers.count) * (cellH + rowGap)
         return NSSize(width: max(240, w), height: max(80, h))
     }
@@ -162,7 +164,7 @@ final class DialView: NSView {
             .foregroundColor: NSColor(white: 1, alpha: 0.55),
         ]
 
-        let cols = columnLabels()
+        let show5h = has5h()
         var rowTop = bounds.height - rowGap / 2   // top of the first row
         for p in providers {
             let cy = rowTop - dialR                // vertical center of this row's dials
@@ -185,14 +187,17 @@ final class DialView: NSView {
                 options: [.usesLineFragmentOrigin], attributes: rowSubAttr)
 
             var x = PAD + nameW
-            for col in cols {
-                if let w = p.windows.first(where: { $0.label == col }) {
+            // 5h column (aligned; placeholder if this provider has no 5h limit).
+            if show5h {
+                if let w = p.windows.first(where: { $0.label == "5h" }) {
                     drawDial(cx: x + dialR, cy: cy, w: w, now: now)
                 } else {
-                    drawPlaceholder(cx: x + dialR, cy: cy, label: col)
+                    drawPlaceholder(cx: x + dialR, cy: cy, label: "5h")
                 }
                 x += cellW
             }
+            // Weekly column: all 7d* limits in one segmented ring (+ legend).
+            drawWeekly(cx: x + dialR, cy: cy, wks: weeklies(p), now: now)
             _ = subAttr
             rowTop -= (cellH + rowGap)
         }
@@ -254,16 +259,93 @@ final class DialView: NSView {
         numStr.draw(at: NSPoint(x: startX, y: cy - nsz.height / 2 + 1), withAttributes: numAttr)
         ("%" as NSString).draw(at: NSPoint(x: startX + nsz.width, y: cy - nsz.height / 2 + 3), withAttributes: pctAttr)
 
-        // Under-dial label:  "5h ↻ 40m"  (window name, then reset countdown —
-        // the ↻ marks it as "resets in", not a fraction of the window)
-        let cd = countdownString(w.resetsAt)
-        let sub = "\(w.label)\(cd.isEmpty ? "" : " ↻ " + cd)" as NSString
+        // Under-dial label. For 5h/7d: "5h ↻ 40m" (name + reset countdown).
+        // For per-model weeklies ("7d Opus"/"7d Fable"): just the model name —
+        // they share the 7d reset, so repeating the countdown only crowds the row.
+        let parts = w.label.split(separator: " ")
+        let subStr: String
+        if parts.count > 1 {
+            subStr = parts.dropFirst().joined(separator: " ")
+        } else {
+            let cd = countdownString(w.resetsAt)
+            subStr = "\(w.label)\(cd.isEmpty ? "" : " ↻ " + cd)"
+        }
+        let sub = subStr as NSString
         let subAttr: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .medium),
             .foregroundColor: NSColor(white: 1, alpha: 0.8),
         ]
         let sz = sub.size(withAttributes: subAttr)
         sub.draw(at: NSPoint(x: cx - sz.width / 2, y: cy - dialR - 12), withAttributes: subAttr)
+    }
+
+    // Weekly limits as ONE dial. A single weekly = a plain ring. Multiple
+    // (all-models + Fable/Opus/…) = a segmented ring: each model an arc segment
+    // filled by its remaining %, with a color-keyed legend on the right.
+    func drawWeekly(cx: CGFloat, cy: CGFloat, wks: [Win], now: Double) {
+        guard !wks.isEmpty else { return }
+        if wks.count == 1 { drawDial(cx: cx, cy: cy, w: wks[0], now: now); return }
+
+        let center = NSPoint(x: cx, y: cy)
+        let outerR = dialR - ringW / 2
+        let n = CGFloat(wks.count)
+        let gapDeg: CGFloat = 12
+        let segDeg = (360 - gapDeg * n) / n
+        var start: CGFloat = 90
+        for w in wks {
+            let track = NSBezierPath()
+            track.appendArc(withCenter: center, radius: outerR, startAngle: start, endAngle: start - segDeg, clockwise: true)
+            NSColor(white: 1, alpha: 0.14).setStroke()
+            track.lineWidth = ringW
+            track.stroke()
+            let f = max(0, min(1, w.leftPercent / 100))
+            if f > 0 {
+                let a = NSBezierPath()
+                a.appendArc(withCenter: center, radius: outerR, startAngle: start, endAngle: start - segDeg * f, clockwise: true)
+                color(w.leftPercent).setStroke()
+                a.lineWidth = ringW
+                a.lineCapStyle = .round
+                a.stroke()
+            }
+            start -= (segDeg + gapDeg)
+        }
+
+        // Center "7d"
+        let lab = "7d" as NSString
+        let labAttr: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .bold),
+            .foregroundColor: NSColor.white,
+        ]
+        let lsz = lab.size(withAttributes: labAttr)
+        lab.draw(at: NSPoint(x: cx - lsz.width / 2, y: cy - lsz.height / 2 + 1), withAttributes: labAttr)
+
+        // Under: the shared weekly reset (all-models = first)
+        let cd = countdownString(wks.first?.resetsAt)
+        if !cd.isEmpty {
+            let u = "↻ \(cd)" as NSString
+            let uAttr: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .medium),
+                .foregroundColor: NSColor(white: 1, alpha: 0.8),
+            ]
+            let usz = u.size(withAttributes: uAttr)
+            u.draw(at: NSPoint(x: cx - usz.width / 2, y: cy - dialR - 12), withAttributes: uAttr)
+        }
+
+        // Legend on the right, color-keyed to each segment.
+        let legAttr: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .medium),
+            .foregroundColor: NSColor(white: 1, alpha: 0.85),
+        ]
+        var ly = cy + (n - 1) * 7.5 - 3
+        for w in wks {
+            let name = w.label == "7d" ? "all" : String(w.label.dropFirst(3))
+            let dot = NSBezierPath(ovalIn: NSRect(x: cx + dialR + 6, y: ly, width: 7, height: 7))
+            color(w.leftPercent).setFill()
+            dot.fill()
+            ("\(name) \(Int(w.leftPercent.rounded()))%" as NSString)
+                .draw(at: NSPoint(x: cx + dialR + 17, y: ly - 3), withAttributes: legAttr)
+            ly -= 15
+        }
     }
 
     // Placeholder for a window a provider doesn't have (e.g. Codex has no 5h

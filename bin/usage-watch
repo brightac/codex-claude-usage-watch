@@ -361,10 +361,10 @@ async function claudeToken() {
   return await claudeRefresh(full);
 }
 
-function normalizeClaudeWindow(win, windowMinutes) {
+function normalizeClaudeWindow(win, windowMinutes, label) {
   if (!win || win.utilization == null) return null;
   // `utilization` is already a 0..100 percentage (verified: 2.0 = 2% used).
-  const util = win.utilization;
+  const usedPercent = Math.round(win.utilization * 10) / 10;
   let resetSec = null;
   const r = win.resets_at;
   if (typeof r === "number") resetSec = r > 1e12 ? r / 1000 : r;
@@ -373,12 +373,26 @@ function normalizeClaudeWindow(win, windowMinutes) {
     if (!Number.isNaN(p)) resetSec = p / 1000;
   }
   return {
-    usedPercent: Math.round(util * 10) / 10,
+    label,
+    usedPercent,
+    remainingPercent: Math.max(0, 100 - usedPercent),
     resetsAt: resetSec,
     windowMinutes: windowMinutes ?? null,
     secondsLeft: resetSec != null ? resetSec - Date.now() / 1000 : null,
   };
 }
+
+// Field -> label. Anthropic exposes per-model weeklies; newer models (e.g.
+// Fable) currently ship under a rotating internal codename rather than a
+// seven_day_<model> key — update the codename here if it changes.
+const CLAUDE_WINDOWS = [
+  ["five_hour", "5h", 300],
+  ["seven_day", "7d", 10080],
+  ["seven_day_opus", "7d Opus", 10080],
+  ["seven_day_sonnet", "7d Sonnet", 10080],
+  ["seven_day_haiku", "7d Haiku", 10080],
+  ["nimbus_quill", "7d Fable", 10080], // Fable weekly (codename, may rotate)
+];
 
 async function getClaude() {
   const oauth = await claudeToken();
@@ -396,13 +410,15 @@ async function getClaude() {
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = JSON.parse(text);
   const rl = data.rate_limits || data.rateLimits || data || {};
+  const windows = [];
+  for (const [key, label, mins] of CLAUDE_WINDOWS) {
+    const w = normalizeClaudeWindow(rl[key], mins, label);
+    if (w) windows.push(w);
+  }
   return {
     planType: oauth.subscriptionType || "unknown",
     tier: oauth.rateLimitTier || "",
-    five_hour: normalizeClaudeWindow(rl.five_hour, 300),
-    seven_day: normalizeClaudeWindow(rl.seven_day, 10080),
-    seven_day_opus: normalizeClaudeWindow(rl.seven_day_opus, 10080),
-    seven_day_sonnet: normalizeClaudeWindow(rl.seven_day_sonnet, 10080),
+    windows,
   };
 }
 const getClaudeCached = withCache("claude", claudeStore, getClaude);
@@ -458,17 +474,9 @@ function claudeSection(res) {
       : `Claude  | unavailable (${msg})` };
   }
   const c = res.value;
-  const defs = [
-    ["5h", c.five_hour],
-    ["7d", c.seven_day],
-    ["7d Opus", c.seven_day_opus],
-    ["7d Sonnet", c.seven_day_sonnet],
-  ];
-  const rows = [];
-  for (const [label, win] of defs) {
-    if (!win) continue;
-    rows.push({ label, used: win.usedPercent, left: Math.max(0, 100 - win.usedPercent), resetsAt: win.resetsAt });
-  }
+  const rows = (c.windows || []).map((w) => ({
+    label: w.label, used: w.usedPercent, left: w.remainingPercent, resetsAt: w.resetsAt,
+  }));
   return { header: `Claude  | ${planLabel("Claude", c.planType, c.tier)}${staleTag(c)}`, rows, extra: [] };
 }
 
@@ -517,14 +525,9 @@ async function buildJson() {
 
   if (claude.status === "fulfilled") {
     const c = claude.value;
-    const windows = [];
-    const add = (label, w) => {
-      if (w) windows.push({ label, leftPercent: Math.max(0, 100 - w.usedPercent), resetsAt: w.resetsAt, windowMinutes: w.windowMinutes });
-    };
-    add("5h", c.five_hour);
-    add("7d", c.seven_day);
-    add("7d Opus", c.seven_day_opus);
-    add("7d Sonnet", c.seven_day_sonnet);
+    const windows = (c.windows || []).map((w) => ({
+      label: w.label, leftPercent: w.remainingPercent, resetsAt: w.resetsAt, windowMinutes: w.windowMinutes,
+    }));
     providers.push({ name: "Claude", plan: c.planType, tier: c.tier, planLabel: planLabel("Claude", c.planType, c.tier), staleSec: c.staleSec ?? null, windows });
   } else {
     providers.push({ name: "Claude", error: claude.reason?.message || "unavailable", windows: [] });
@@ -539,20 +542,14 @@ async function buildLine() {
 
   // One-line mode also shows remaining ("left") to match the full view.
   if (codex.status === "fulfilled") {
-    const c = codex.value;
-    const seg = [];
-    if (c.primary) seg.push(`5h ${pct(c.primary.remainingPercent)}`);
-    if (c.secondary) seg.push(`7d ${pct(c.secondary.remainingPercent)}`);
+    const seg = (codex.value.windows || []).map((w) => `${w.label} ${pct(w.remainingPercent)}`);
     parts.push(`Codex ${seg.join(" ")}`.trim());
   } else {
     parts.push("Codex n/a");
   }
 
   if (claude.status === "fulfilled") {
-    const c = claude.value;
-    const seg = [];
-    if (c.five_hour) seg.push(`5h ${pct(Math.max(0, 100 - c.five_hour.usedPercent))}`);
-    if (c.seven_day) seg.push(`7d ${pct(Math.max(0, 100 - c.seven_day.usedPercent))}`);
+    const seg = (claude.value.windows || []).map((w) => `${w.label} ${pct(w.remainingPercent)}`);
     parts.push(`Claude ${seg.join(" ")}`.trim());
   } else {
     parts.push(claude.reason?.message === "login" ? "Claude login" : "Claude n/a");
