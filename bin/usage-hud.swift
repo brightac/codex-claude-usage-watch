@@ -291,7 +291,9 @@ final class DialView: NSView {
         let n = CGFloat(wks.count)
         let gapDeg: CGFloat = 12
         let segDeg = (360 - gapDeg * n) / n
-        var start: CGFloat = 90
+        // Center a gap at the top (12 o'clock) so 2 segments read as clean
+        // left/right halves (gaps at top & bottom), not a rotated split.
+        var start: CGFloat = 90 - gapDeg / 2
         for w in wks {
             let track = NSBezierPath()
             track.appendArc(withCenter: center, radius: outerR, startAngle: start, endAngle: start - segDeg, clockwise: true)
