@@ -90,6 +90,13 @@ func ageString(_ sec: Double) -> String {
     if h < 24 { return "\(h)h \(m % 60)m ago" }
     return "\(h / 24)d \(h % 24)h ago"
 }
+// Compact single-unit age for the ⚠ stale badge: m < 1h, h < 1d, else d.
+func staleAge(_ sec: Double) -> String {
+    let s = Int(max(0, sec))
+    if s < 3600 { return "\(s / 60)m" }
+    if s < 86400 { return "\(s / 3600)h" }
+    return "\(s / 86400)d"
+}
 func countdownString(_ resetsAt: Double?) -> String {
     guard let r = resetsAt else { return "" }
     var s = Int(max(0, r - Date().timeIntervalSince1970))
@@ -175,7 +182,7 @@ final class DialView: NSView {
             var subText = p.subtitle
             var subFg = NSColor(white: 1, alpha: 0.55)
             if let s = p.staleSec, s > 90 {
-                subText += "  ⚠\(Int((s / 60).rounded()))m"
+                subText += "  ⚠\(staleAge(s))"
                 subFg = NSColor(calibratedRed: 1.0, green: 0.76, blue: 0.24, alpha: 0.95)
             }
             let rowSubAttr: [NSAttributedString.Key: Any] = [

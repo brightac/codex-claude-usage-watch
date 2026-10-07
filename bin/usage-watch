@@ -141,18 +141,38 @@ function pctPad(n) {
 // Codex source (live app-server JSON-RPC)
 // ===========================================================================
 
+// Find the codex binary. The ChatGPT app has moved it around (it used to be at
+// Resources/codex, now Resources/codex-cli/bin/codex), so try several locations
+// and the PATH rather than hardcoding one — a wrong path spawns ENOENT and the
+// HUD silently falls back to stale cache.
 function codexBin() {
-  return (
-    process.env.CODEX_BIN ||
-    "/Applications/ChatGPT.app/Contents/Resources/codex"
-  );
+  const candidates = [
+    process.env.CODEX_BIN,
+    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+    "/Applications/ChatGPT.app/Contents/Resources/codex",
+  ].filter(Boolean);
+  for (const dir of (process.env.PATH || "").split(":")) {
+    if (dir) candidates.push(`${dir}/codex`);
+  }
+  for (const p of candidates) {
+    try {
+      fs.accessSync(p, fs.constants.X_OK);
+      return p;
+    } catch {}
+  }
+  return null;
 }
 
 function readCodexRateLimits() {
   return new Promise((resolve, reject) => {
+    const bin = codexBin();
+    if (!bin) {
+      reject(new Error("codex binary not found (set CODEX_BIN, or install the ChatGPT/Codex app)"));
+      return;
+    }
     let child;
     try {
-      child = spawn(codexBin(), ["app-server", "--stdio"], {
+      child = spawn(bin, ["app-server", "--stdio"], {
         stdio: ["pipe", "pipe", "pipe"],
         env: process.env,
       });
@@ -274,6 +294,21 @@ async function getCodex() {
   throw lastErr;
 }
 
+// A cached reading is only worth showing while it could still be current. It is
+// too stale (and we'd rather report "unavailable" than lie) once it is older
+// than one of its own windows, or once any of its windows has already reset.
+function cacheTooStale(value, at) {
+  const now = Date.now();
+  const ageSec = (now - at) / 1000;
+  const wins = Array.isArray(value && value.windows) ? value.windows : [];
+  for (const w of wins) {
+    const winSec = (w.windowMinutes || 0) * 60;
+    if (winSec > 0 && ageSec > winSec) return true;         // older than this window
+    if (w.resetsAt && w.resetsAt < now / 1000) return true; // window already reset
+  }
+  return false;
+}
+
 // Keep the last successful reading so a transient failure (throttling, a
 // dropped app-server, a network blip) shows slightly-stale data instead of
 // "unavailable". "login" errors are never masked — those need real action.
@@ -289,10 +324,10 @@ function withCache(name, store, fn) {
       if (process.env.UW_DEBUG) console.error(`[${name}] fetch failed:`, e.message);
       if (e.message === "login") throw e; // real auth problem — never mask it
       const src = store.value ? { value: store.value, at: store.at } : loadCache(name);
-      if (src && src.value) {
+      if (src && src.value && !cacheTooStale(src.value, src.at)) {
         return { ...src.value, staleSec: Math.round((Date.now() - src.at) / 1000) };
       }
-      throw e;
+      throw e; // no cache, or it's too old to trust — surface the failure
     }
   };
 }
