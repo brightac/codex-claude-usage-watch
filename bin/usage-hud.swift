@@ -25,10 +25,13 @@ struct Win {
     let resetsAt: Double?
     let windowMinutes: Double?
 }
+let LOGIN_CMD = "claude auth login"
+
 struct Provider {
     let name: String
     let subtitle: String   // plan / tier / error
     let staleSec: Double?  // set when this provider's data came from cache
+    let needsLogin: Bool   // auth expired → user must re-run `claude auth login`
     let windows: [Win]
 }
 
@@ -70,6 +73,7 @@ func parseProviders(_ json: String) -> [Provider] {
         // Keep the dial subtitle short (just the plan) so it never collides
         // with the gauges. The full tier/stale detail lives in the text skin.
         var sub = pr["planLabel"] as? String ?? pr["plan"] as? String ?? ""
+        let needsLogin = (pr["error"] as? String) == "login"
         if let e = pr["error"] as? String { sub = e == "login" ? "not logged in" : e }
         let wins = (pr["windows"] as? [[String: Any]] ?? []).map { w in
             Win(label: w["label"] as? String ?? "",
@@ -77,7 +81,7 @@ func parseProviders(_ json: String) -> [Provider] {
                 resetsAt: w["resetsAt"] as? Double,
                 windowMinutes: (w["windowMinutes"] as? Double) ?? (w["windowMinutes"] as? Int).map(Double.init))
         }
-        return Provider(name: name, subtitle: sub, staleSec: pr["staleSec"] as? Double, windows: wins)
+        return Provider(name: name, subtitle: sub, staleSec: pr["staleSec"] as? Double, needsLogin: needsLogin, windows: wins)
     }
 }
 
@@ -148,7 +152,9 @@ final class DialView: NSView {
 
     func contentSize() -> NSSize {
         let ncols = max(1, alignedCols().count + maxExtra())
-        let w = nameW + CGFloat(ncols) * cellW + PAD
+        var w = nameW + CGFloat(ncols) * cellW + PAD
+        // Room for the "run: claude auth login" hint when a provider is logged out.
+        if providers.contains(where: { $0.needsLogin }) { w = max(w, nameW + 210 + PAD) }
         let h = CGFloat(providers.count) * (cellH + rowGap)
         return NSSize(width: max(240, w), height: max(80, h))
     }
@@ -193,20 +199,30 @@ final class DialView: NSView {
                 with: NSRect(x: PAD, y: cy - 26, width: nameW + 70, height: 24),
                 options: [.usesLineFragmentOrigin], attributes: rowSubAttr)
 
-            var x = PAD + nameW
-            // Aligned columns (5h, 7d), placeholder if missing.
-            for col in aligned {
-                if let w = p.windows.first(where: { $0.label == col }) {
-                    drawDial(cx: x + dialR, cy: cy, w: w, now: now)
-                } else {
-                    drawPlaceholder(cx: x + dialR, cy: cy, label: col)
+            let x0 = PAD + nameW
+            if p.needsLogin {
+                // Not an empty/no-limit state — tell the user how to fix it.
+                let hintAttr: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium),
+                    .foregroundColor: NSColor(calibratedRed: 1.0, green: 0.76, blue: 0.24, alpha: 0.95),
+                ]
+                ("run:  \(LOGIN_CMD)" as NSString).draw(at: NSPoint(x: x0, y: cy - 6), withAttributes: hintAttr)
+            } else {
+                var x = x0
+                // Aligned columns (5h, 7d), placeholder if missing.
+                for col in aligned {
+                    if let w = p.windows.first(where: { $0.label == col }) {
+                        drawDial(cx: x + dialR, cy: cy, w: w, now: now)
+                    } else {
+                        drawPlaceholder(cx: x + dialR, cy: cy, label: col)
+                    }
+                    x += cellW
                 }
-                x += cellW
-            }
-            // Per-model weeklies (Opus/Sonnet/Fable), appended as their own dials.
-            for w in p.windows where !alignedSet.contains(w.label) {
-                drawDial(cx: x + dialR, cy: cy, w: w, now: now)
-                x += cellW
+                // Per-model weeklies (Opus/Sonnet/Fable), appended as their own dials.
+                for w in p.windows where !alignedSet.contains(w.label) {
+                    drawDial(cx: x + dialR, cy: cy, w: w, now: now)
+                    x += cellW
+                }
             }
             _ = subAttr
             rowTop -= (cellH + rowGap)
@@ -507,6 +523,12 @@ final class HUD: NSObject, NSApplicationDelegate {
                 it.isEnabled = false
                 menu.addItem(it)
             }
+            if p.needsLogin {
+                let it = NSMenuItem(title: "    → Log in: \(LOGIN_CMD)   (click to copy)",
+                                    action: #selector(menuCopyLogin), keyEquivalent: "")
+                it.target = self
+                menu.addItem(it)
+            }
         }
 
         // Data freshness
@@ -563,6 +585,10 @@ final class HUD: NSObject, NSApplicationDelegate {
     }
     @objc func menuToggleSkin() { toggleSkin() }
     @objc func menuRefresh() { startDataTimer(); refresh() }
+    @objc func menuCopyLogin() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(LOGIN_CMD, forType: .string)
+    }
 
     func clockString(_ d: Date?, seconds: Bool) -> String {
         guard let d = d else { return "—" }
