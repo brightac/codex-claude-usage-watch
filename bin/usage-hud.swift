@@ -185,11 +185,14 @@ final class DialView: NSView {
             // If the data is stale (from cache), append the age in amber so the
             // dial doesn't silently show old numbers as if fresh.
             (p.name as NSString).draw(at: NSPoint(x: PAD, y: cy + 1), withAttributes: nameAttr)
+            let amber = NSColor(calibratedRed: 1.0, green: 0.76, blue: 0.24, alpha: 1)
             var subText = p.subtitle
             var subFg = NSColor(white: 1, alpha: 0.55)
-            if let s = p.staleSec, s > 90 {
+            if p.needsLogin {
+                subText = ""   // the amber login chip beside the name says it all
+            } else if let s = p.staleSec, s > 90 {
                 subText += "  ⚠\(staleAge(s))"
-                subFg = NSColor(calibratedRed: 1.0, green: 0.76, blue: 0.24, alpha: 0.95)
+                subFg = amber.withAlphaComponent(0.95)
             }
             let rowSubAttr: [NSAttributedString.Key: Any] = [
                 .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .regular),
@@ -201,12 +204,19 @@ final class DialView: NSView {
 
             let x0 = PAD + nameW
             if p.needsLogin {
-                // Not an empty/no-limit state — tell the user how to fix it.
-                let hintAttr: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium),
-                    .foregroundColor: NSColor(calibratedRed: 1.0, green: 0.76, blue: 0.24, alpha: 0.95),
+                // A rounded amber "chip" showing the fix, vertically centered.
+                let cmdAttr: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold),
+                    .foregroundColor: amber,
                 ]
-                ("run:  \(LOGIN_CMD)" as NSString).draw(at: NSPoint(x: x0, y: cy - 6), withAttributes: hintAttr)
+                let cmd = LOGIN_CMD as NSString
+                let csz = cmd.size(withAttributes: cmdAttr)
+                let padX: CGFloat = 12, chipH: CGFloat = 26
+                let chip = NSRect(x: x0, y: cy - chipH / 2, width: csz.width + padX * 2, height: chipH)
+                let rr = NSBezierPath(roundedRect: chip, xRadius: 8, yRadius: 8)
+                amber.withAlphaComponent(0.12).setFill(); rr.fill()
+                amber.withAlphaComponent(0.55).setStroke(); rr.lineWidth = 1; rr.stroke()
+                cmd.draw(at: NSPoint(x: x0 + padX, y: cy - csz.height / 2), withAttributes: cmdAttr)
             } else {
                 var x = x0
                 // Aligned columns (5h, 7d), placeholder if missing.
