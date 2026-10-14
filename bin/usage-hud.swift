@@ -353,57 +353,53 @@ final class DialView: NSView {
 final class MiniView: NSView {
     var providers: [Provider] = [] { didSet { needsDisplay = true } }
     let fontSize: CGFloat = 12
-    let dotD: CGFloat = 8
-    let dotGap: CGFloat = 5      // dot → text
-    let segGap: CGFloat = 16     // provider → provider
-    var font: NSFont { NSFont.monospacedSystemFont(ofSize: fontSize, weight: .medium) }
     override var isFlipped: Bool { false }
 
+    func mono(_ w: NSFont.Weight) -> NSFont { NSFont.monospacedSystemFont(ofSize: fontSize, weight: w) }
     func color(_ pct: Double) -> NSColor {
         if pct >= 50 { return NSColor(calibratedRed: 0.32, green: 0.85, blue: 0.48, alpha: 1) }
         if pct >= 20 { return NSColor(calibratedRed: 1.0, green: 0.76, blue: 0.24, alpha: 1) }
         return NSColor(calibratedRed: 1.0, green: 0.38, blue: 0.38, alpha: 1)
     }
 
-    // (dot color, text) per provider — tightest remaining %, or "login".
-    func segments() -> [(NSColor, String)] {
+    // One compact line per provider: name, then every window as "label pct%"
+    // with the % colored by its level. Built as an attributed string so widths
+    // and colors stay in sync between measuring and drawing.
+    func line() -> NSAttributedString {
         let amber = NSColor(calibratedRed: 1.0, green: 0.76, blue: 0.24, alpha: 1)
-        var out: [(NSColor, String)] = []
-        for p in providers {
+        let grey = NSColor(white: 1, alpha: 0.6)
+        let s = NSMutableAttributedString()
+        func add(_ t: String, _ c: NSColor, _ w: NSFont.Weight) {
+            s.append(NSAttributedString(string: t, attributes: [.font: mono(w), .foregroundColor: c]))
+        }
+        for (pi, p) in providers.enumerated() {
+            if pi > 0 { add("   ", grey, .regular) }   // provider gap
+            add(p.name, .white, .semibold)
             if p.needsLogin {
-                out.append((amber, "\(p.name) login"))
-            } else if let m = p.windows.map({ $0.leftPercent }).min() {
-                out.append((color(m), "\(p.name) \(Int(m.rounded()))%"))
+                add(" login", amber, .semibold)
+                continue
+            }
+            for w in p.windows {
+                add("  \(miniLabel(w.label)) ", grey, .regular)
+                add("\(Int(w.leftPercent.rounded()))%", color(w.leftPercent), .semibold)
             }
         }
-        return out
+        return s
+    }
+    // Keep weekly per-model labels short in mini ("7d Fable" -> "Fable").
+    func miniLabel(_ l: String) -> String {
+        l.hasPrefix("7d ") ? String(l.dropFirst(3)) : l
     }
 
     func contentSize() -> NSSize {
-        let attrs: [NSAttributedString.Key: Any] = [.font: font]
-        let segs = segments()
-        var w: CGFloat = 0
-        for (i, s) in segs.enumerated() {
-            if i > 0 { w += segGap }
-            w += dotD + dotGap + (s.1 as NSString).size(withAttributes: attrs).width
-        }
-        let lh = NSLayoutManager().defaultLineHeight(for: font)
-        return NSSize(width: max(70, ceil(w)), height: ceil(lh) + 10)
+        let sz = line().size()
+        return NSSize(width: max(70, ceil(sz.width)), height: ceil(sz.height) + 8)
     }
 
     override func draw(_ dirty: NSRect) {
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
-        let lh = NSLayoutManager().defaultLineHeight(for: font)
-        let cy = bounds.height / 2
-        var x: CGFloat = 0
-        for (i, s) in segments().enumerated() {
-            if i > 0 { x += segGap }
-            let dot = NSBezierPath(ovalIn: NSRect(x: x, y: cy - dotD / 2, width: dotD, height: dotD))
-            s.0.setFill(); dot.fill()
-            x += dotD + dotGap
-            (s.1 as NSString).draw(at: NSPoint(x: x, y: cy - lh / 2), withAttributes: attrs)
-            x += (s.1 as NSString).size(withAttributes: attrs).width
-        }
+        let l = line()
+        let sz = l.size()
+        l.draw(at: NSPoint(x: 0, y: (bounds.height - sz.height) / 2))
     }
 }
 
