@@ -52,6 +52,13 @@ All are self‑contained (`usage-watch`/`*-usage-watch` are single Node scripts,
 
 ## Install
 
+**Prebuilt (no Xcode):** download `usage-watch-macos.zip` from the
+[latest release](https://github.com/brightac/codex-claude-usage-watch/releases/latest),
+unzip, and double‑click `install.command` (it clears the Gatekeeper quarantine
+and starts at login). Universal binary, macOS 12+.
+
+**From source:**
+
 ```bash
 git clone https://github.com/brightac/codex-claude-usage-watch
 cd codex-claude-usage-watch
