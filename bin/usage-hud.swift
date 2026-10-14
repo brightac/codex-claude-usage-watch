@@ -347,6 +347,67 @@ final class DialView: NSView {
 }
 
 // ---------------------------------------------------------------------------
+// Mini skin — one tiny row: a color dot + tightest remaining % per provider.
+// ---------------------------------------------------------------------------
+
+final class MiniView: NSView {
+    var providers: [Provider] = [] { didSet { needsDisplay = true } }
+    let fontSize: CGFloat = 12
+    let dotD: CGFloat = 8
+    let dotGap: CGFloat = 5      // dot → text
+    let segGap: CGFloat = 16     // provider → provider
+    var font: NSFont { NSFont.monospacedSystemFont(ofSize: fontSize, weight: .medium) }
+    override var isFlipped: Bool { false }
+
+    func color(_ pct: Double) -> NSColor {
+        if pct >= 50 { return NSColor(calibratedRed: 0.32, green: 0.85, blue: 0.48, alpha: 1) }
+        if pct >= 20 { return NSColor(calibratedRed: 1.0, green: 0.76, blue: 0.24, alpha: 1) }
+        return NSColor(calibratedRed: 1.0, green: 0.38, blue: 0.38, alpha: 1)
+    }
+
+    // (dot color, text) per provider — tightest remaining %, or "login".
+    func segments() -> [(NSColor, String)] {
+        let amber = NSColor(calibratedRed: 1.0, green: 0.76, blue: 0.24, alpha: 1)
+        var out: [(NSColor, String)] = []
+        for p in providers {
+            if p.needsLogin {
+                out.append((amber, "\(p.name) login"))
+            } else if let m = p.windows.map({ $0.leftPercent }).min() {
+                out.append((color(m), "\(p.name) \(Int(m.rounded()))%"))
+            }
+        }
+        return out
+    }
+
+    func contentSize() -> NSSize {
+        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+        let segs = segments()
+        var w: CGFloat = 0
+        for (i, s) in segs.enumerated() {
+            if i > 0 { w += segGap }
+            w += dotD + dotGap + (s.1 as NSString).size(withAttributes: attrs).width
+        }
+        let lh = NSLayoutManager().defaultLineHeight(for: font)
+        return NSSize(width: max(70, ceil(w)), height: ceil(lh) + 10)
+    }
+
+    override func draw(_ dirty: NSRect) {
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+        let lh = NSLayoutManager().defaultLineHeight(for: font)
+        let cy = bounds.height / 2
+        var x: CGFloat = 0
+        for (i, s) in segments().enumerated() {
+            if i > 0 { x += segGap }
+            let dot = NSBezierPath(ovalIn: NSRect(x: x, y: cy - dotD / 2, width: dotD, height: dotD))
+            s.0.setFill(); dot.fill()
+            x += dotD + dotGap
+            (s.1 as NSString).draw(at: NSPoint(x: x, y: cy - lh / 2), withAttributes: attrs)
+            x += (s.1 as NSString).size(withAttributes: attrs).width
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 
@@ -355,6 +416,7 @@ final class HUD: NSObject, NSApplicationDelegate {
     var blur: NSVisualEffectView!
     var label: NSTextField!          // text skin
     var dial: DialView!              // dial skin
+    var mini: MiniView!              // mini skin
     var dataTimer: Timer?
     var animTimer: Timer?
     var statusItem: NSStatusItem!
@@ -419,6 +481,10 @@ final class HUD: NSObject, NSApplicationDelegate {
         blur.addSubview(dv)
         self.dial = dv
 
+        let mv = MiniView(frame: .zero)
+        blur.addSubview(mv)
+        self.mini = mv
+
         if !w.setFrameUsingName("UsageHUD") { w.center() }
         w.setFrameAutosaveName("UsageHUD")
         w.makeKeyAndOrderFront(nil)
@@ -463,42 +529,46 @@ final class HUD: NSObject, NSApplicationDelegate {
         dataTimer = Timer.scheduledTimer(withTimeInterval: REFRESH_SECONDS, repeats: true) { _ in self.refresh() }
     }
 
+    let skinOrder = ["text", "dial", "mini"]
     func toggleSkin() {
-        UserDefaults.standard.set(skin == "text" ? "dial" : "text", forKey: "skin")
+        let next = skinOrder[((skinOrder.firstIndex(of: skin) ?? 0) + 1) % skinOrder.count]
+        UserDefaults.standard.set(next, forKey: "skin")
         applySkin()
         refresh()
     }
 
-    // Show the right subview and (for dial) run a 1s animation timer.
+    // Show the right subview, re-render immediately from cached data (so the
+    // window resizes at once), and run the dial's slow redraw timer only for dial.
     func applySkin() {
-        let isDial = skin == "dial"
-        label.isHidden = isDial
-        dial.isHidden = !isDial
+        label.isHidden = skin != "text"
+        dial.isHidden = skin != "dial"
+        mini.isHidden = skin != "mini"
         animTimer?.invalidate(); animTimer = nil
-        if isDial {
-            // Redraw every 30s only to keep the countdown / time-remaining wedge
-            // current — not a spinning animation.
+        if skin == "dial" {
             animTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { _ in
                 self.dial.needsDisplay = true
             }
         }
-        // Re-render immediately from cached data so the window resizes to the
-        // new skin right away, instead of keeping the old size until the next
-        // (async) fetch finishes.
-        if isDial { renderDial(latestProviders) }
-        else { renderText(lastText.isEmpty ? "Loading…" : lastText) }
+        switch skin {
+        case "dial": renderDial(latestProviders)
+        case "mini": renderMini(latestProviders)
+        default: renderText(lastText.isEmpty ? "Loading…" : lastText)
+        }
     }
 
     func refresh() {
-        let isDial = skin == "dial"
+        let s = skin
         DispatchQueue.global(qos: .utility).async {
             let providers = parseProviders(runScript("--json"))
-            let text = isDial ? "" : runScript("--once").trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = s == "text" ? runScript("--once").trimmingCharacters(in: .whitespacesAndNewlines) : ""
             DispatchQueue.main.async {
                 self.latestProviders = providers
                 self.lastUpdated = Date()
-                if isDial { self.renderDial(providers) }
-                else { self.renderText(text.isEmpty ? "(no output)" : text) }
+                switch s {
+                case "dial": self.renderDial(providers)
+                case "mini": self.renderMini(providers)
+                default: self.renderText(text.isEmpty ? "(no output)" : text)
+                }
                 self.updateStatusAndMenu()
             }
         }
@@ -552,7 +622,7 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        let skinItem = NSMenuItem(title: "Skin: \(skin == "dial" ? "Dial" : "Text")",
+        let skinItem = NSMenuItem(title: "Skin: \(skin.prefix(1).uppercased() + skin.dropFirst())  (⌘T to cycle)",
                                   action: #selector(menuToggleSkin), keyEquivalent: "t")
         skinItem.keyEquivalentModifierMask = .command; skinItem.target = self
         menu.addItem(skinItem)
@@ -638,11 +708,21 @@ final class HUD: NSObject, NSApplicationDelegate {
         dial.needsDisplay = true
     }
 
+    func renderMini(_ providers: [Provider]) {
+        mini.providers = providers
+        let pad: CGFloat = 12   // tight padding — the whole point of mini
+        let cs = mini.contentSize()
+        let sz = NSSize(width: cs.width + pad, height: cs.height + pad)
+        resize(to: sz, minW: 90, minH: 30)
+        mini.frame = NSRect(x: pad / 2, y: pad / 2, width: sz.width - pad, height: sz.height - pad)
+        mini.needsDisplay = true
+    }
+
     // Resize keeping the top-left corner fixed.
-    func resize(to size: NSSize) {
+    func resize(to size: NSSize, minW: CGFloat = 240, minH: CGFloat = 70) {
         let top = window.frame.maxY
         var f = window.frame
-        f.size = NSSize(width: max(240, size.width), height: max(70, size.height))
+        f.size = NSSize(width: max(minW, size.width), height: max(minH, size.height))
         f.origin.y = top - f.size.height
         window.setFrame(f, display: true, animate: false)
         // Recompute the drop shadow from the rounded content so it doesn't
